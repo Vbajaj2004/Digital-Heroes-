@@ -21,58 +21,135 @@ export default function ScoreForm({
   const [scoreDate, setScoreDate] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(
+    e: React.FormEvent<HTMLFormElement>
+  ) {
     e.preventDefault();
 
     onMessage("", "success");
 
     const numericScore = Number(score);
 
+    // Validate date
     if (!scoreDate) {
       onMessage("Please select a date.", "error");
       return;
     }
 
+    // Validate score
     if (
       !Number.isInteger(numericScore) ||
       numericScore < 1 ||
       numericScore > 45
     ) {
-      onMessage("Score must be between 1 and 45.", "error");
+      onMessage(
+        "Score must be between 1 and 45.",
+        "error"
+      );
       return;
     }
 
     setLoading(true);
 
-    const { error } = await supabase.from("golf_scores").insert({
-      user_id: userId,
-      score: numericScore,
-      score_date: scoreDate,
-    });
+    try {
+      // --------------------------------------------------
+      // STEP 1: Check whether this date already exists
+      // --------------------------------------------------
+      const {
+        data: existingScore,
+        error: existingScoreError,
+      } = await supabase
+        .from("golf_scores")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("score_date", scoreDate)
+        .maybeSingle();
 
-    setLoading(false);
+      if (existingScoreError) {
+        console.error(
+          "Duplicate-date check failed:",
+          existingScoreError
+        );
 
-    if (error) {
-      console.error("Supabase error:", error);
-
-      if (error.code === "23505") {
         onMessage(
-          "A score for this date already exists. Edit or delete the existing score instead.",
+          "Unable to check this score date. Please try again.",
           "error"
         );
-      } else {
-        onMessage(error.message, "error");
+
+        return;
       }
 
-      return;
+      // --------------------------------------------------
+      // STEP 2: Show a friendly message for duplicates
+      // --------------------------------------------------
+      if (existingScore) {
+        onMessage(
+          "A score for this date already exists. Please edit or delete the existing score instead.",
+          "error"
+        );
+
+        return;
+      }
+
+      // --------------------------------------------------
+      // STEP 3: Insert the new score
+      // --------------------------------------------------
+      const { error: insertError } = await supabase
+        .from("golf_scores")
+        .insert({
+          user_id: userId,
+          score: numericScore,
+          score_date: scoreDate,
+        });
+
+      if (insertError) {
+        console.error(
+          "Supabase insert error:",
+          insertError
+        );
+
+        // Keep a friendly fallback for duplicate constraints
+        if (insertError.code === "23505") {
+          onMessage(
+            "A score for this date already exists. Please edit or delete the existing score instead.",
+            "error"
+          );
+        } else {
+          onMessage(
+            "Unable to add the score. Please try again.",
+            "error"
+          );
+        }
+
+        return;
+      }
+
+      // --------------------------------------------------
+      // STEP 4: Clear form after successful insert
+      // --------------------------------------------------
+      setScore("");
+      setScoreDate("");
+
+      onMessage(
+        "Score added successfully!",
+        "success"
+      );
+
+      // Refresh server-rendered dashboard data
+      router.refresh();
+    } catch (error) {
+      console.error(
+        "Unexpected score error:",
+        error
+      );
+
+      onMessage(
+        "Something went wrong while adding the score.",
+        "error"
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setScore("");
-    setScoreDate("");
-
-    onMessage("Score added successfully!", "success");
-
-    router.refresh();
   }
 
   return (
@@ -80,6 +157,7 @@ export default function ScoreForm({
       onSubmit={handleSubmit}
       className="mt-6 grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 md:grid-cols-[1fr_1fr_auto]"
     >
+      {/* Score */}
       <div>
         <label
           htmlFor="score"
@@ -99,8 +177,13 @@ export default function ScoreForm({
           className="w-full rounded-xl border border-white/10 bg-[#07111f] px-4 py-3 text-white outline-none focus:border-emerald-400"
           required
         />
+
+        <p className="mt-2 text-xs text-white/35">
+          Enter a score from 1 to 45.
+        </p>
       </div>
 
+      {/* Date */}
       <div>
         <label
           htmlFor="scoreDate"
@@ -113,12 +196,19 @@ export default function ScoreForm({
           id="scoreDate"
           type="date"
           value={scoreDate}
-          onChange={(e) => setScoreDate(e.target.value)}
+          onChange={(e) =>
+            setScoreDate(e.target.value)
+          }
           className="w-full rounded-xl border border-white/10 bg-[#07111f] px-4 py-3 text-white outline-none focus:border-emerald-400"
           required
         />
+
+        <p className="mt-2 text-xs text-white/35">
+          Only one score is allowed per date.
+        </p>
       </div>
 
+      {/* Submit */}
       <div className="flex items-end">
         <button
           type="submit"
